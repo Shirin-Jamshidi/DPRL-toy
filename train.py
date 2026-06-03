@@ -1,6 +1,7 @@
 import torch
 import torch.optim as optim
 import numpy as np
+import matplotlib.pyplot as plt
 
 from env import GymEnv
 from buffer import ReplayBuffer
@@ -178,6 +179,7 @@ def train_policy(batch_size=64):
 num_episodes = 2000
 max_steps = 200
 
+reward_history = []
 for ep in range(num_episodes):
     s = env.reset()
     total_reward = 0
@@ -218,5 +220,18 @@ for ep in range(num_episodes):
     for param, target_param in zip(q_net.parameters(), target_q.parameters()):
         target_param.data.copy_(0.995 * target_param.data + 0.005 * param.data)
 
+    reward_history.append(total_reward)
     if ep % 50 == 0:
         print(f"Episode {ep}, Reward: {total_reward:.2f}")
+
+
+# =======================
+# ✅ Save reward plot
+# =======================
+plt.figure()
+plt.plot(reward_history)
+plt.xlabel("Episode")
+plt.ylabel("Reward")
+plt.title("Training Reward (Pendulum Diffusion RL)")
+
+plt.savefig("reward_plot.png")
