@@ -1,22 +1,18 @@
-import numpy as np
+import gymnasium as gym
 
-class ToyEnv:
+class GymEnv:
     def __init__(self):
-        self.goal = 0.0
-        self.max_steps = 50
+        self.env = gym.make("Pendulum-v1")
 
     def reset(self):
-        self.state = np.random.uniform(-2.0, 2.0)
-        self.steps = 0
-        return self.state
+        state, _ = self.env.reset()
+        return state
 
     def step(self, action):
-        action = np.clip(action, -1, 1)
-        next_state = self.state + action
-        reward = -abs(next_state - self.goal)
+        # Gym expects shape (1,)
+        action = [action]
 
-        self.state = next_state
-        self.steps += 1
+        state, reward, terminated, truncated, _ = self.env.step(action)
+        done = terminated or truncated
 
-        done = self.steps >= self.max_steps or abs(next_state) < 0.01
-        return next_state, reward, done
+        return state, reward, done
