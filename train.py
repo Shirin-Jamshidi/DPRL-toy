@@ -27,6 +27,13 @@ policy_optimizer = optim.Adam(policy.parameters(), lr=1e-3)
 
 gamma = 0.99
 
+# Noise Schedule
+T = 10  # number of diffusion steps
+
+betas = torch.linspace(0.0001, 0.02, T).to(device)
+alphas = 1.0 - betas
+alpha_bar = torch.cumprod(alphas, dim=0)
+
 
 # =======================
 # ✅ Q-learning update
@@ -69,19 +76,60 @@ def train_q(batch_size=64):
 # =======================
 # ✅ Policy update (QVPO-style)
 # =======================
+# def train_policy(batch_size=64):
+#     if len(buffer) < batch_size:
+#         return
+
+#     s, _, _, _ = buffer.sample(batch_size)
+
+#     s = torch.tensor(s, dtype=torch.float32).to(device)  # (B, 3)
+
+#     noise = torch.randn((s.shape[0], 1)).to(device)
+#     actions = policy(s, noise)       # [-1,1]
+#     actions = 2.0 * actions          # scale to [-2,2]
+
+#     q_val = q_net(s, actions)
+
+#     with torch.no_grad():
+#         baseline = q_val.mean()
+
+#     advantage = q_val - baseline
+#     weights = torch.clamp(advantage, min=0)
+
+#     # ✅ maximize Q via weighted objective
+#     loss = -(weights * q_val).mean()
+
+#     policy_optimizer.zero_grad()
+#     loss.backward()
+#     policy_optimizer.step()
 def train_policy(batch_size=64):
     if len(buffer) < batch_size:
         return
 
-    s, _, _, _ = buffer.sample(batch_size)
+    s, a, r, s_next = buffer.sample(batch_size)
 
-    s = torch.tensor(s, dtype=torch.float32).to(device)  # (B, 3)
+    s = torch.tensor(s, dtype=torch.float32).to(device)       # (B,3)
+    a = torch.tensor(a, dtype=torch.float32).unsqueeze(1).to(device)  # (B,1)
 
-    noise = torch.randn((s.shape[0], 1)).to(device)
-    actions = policy(s, noise)       # [-1,1]
-    actions = 2.0 * actions          # scale to [-2,2]
+    # ✅ Sample timestep
+    t = torch.randint(0, T, (batch_size,)).to(device)
 
-    q_val = q_net(s, actions)
+    alpha_bar_t = alpha_bar[t].unsqueeze(1)
+
+    # ✅ Sample noise (ε in equation 4)
+    epsilon = torch.randn_like(a)
+
+    # ✅ Create noisy action (forward diffusion)
+    noisy_a = torch.sqrt(alpha_bar_t) * a + torch.sqrt(1 - alpha_bar_t) * epsilon
+
+    # ✅ Normalize timestep
+    t_normalized = t.float().unsqueeze(1) / T
+
+    # ✅ Predict noise (εθ)
+    epsilon_pred = policy(s, noisy_a, t_normalized)
+
+    # ✅ Compute Q for weighting
+    q_val = q_net(s, a)
 
     with torch.no_grad():
         baseline = q_val.mean()
@@ -89,13 +137,37 @@ def train_policy(batch_size=64):
     advantage = q_val - baseline
     weights = torch.clamp(advantage, min=0)
 
-    # ✅ maximize Q via weighted objective
-    loss = -(weights * q_val).mean()
+    # ✅ TRUE Eq (4): weighted diffusion loss
+    loss = (weights * (epsilon - epsilon_pred) ** 2).mean()
 
     policy_optimizer.zero_grad()
     loss.backward()
     policy_optimizer.step()
 
+def sample_action(s):
+    s = torch.tensor(s, dtype=torch.float32).unsqueeze(0).to(device)
+
+    # start from noise
+    a = torch.randn((1,1)).to(device)
+
+    for t in reversed(range(T)):
+        t_tensor = torch.tensor([[t / T]], dtype=torch.float32).to(device)
+
+        epsilon_pred = policy(s, a, t_tensor)
+
+        alpha_t = alphas[t]
+        alpha_bar_t = alpha_bar[t]
+
+        if t > 0:
+            noise = torch.randn_like(a)
+        else:
+            noise = 0
+
+        a = (1 / torch.sqrt(alpha_t)) * (
+            a - ((1 - alpha_t) / torch.sqrt(1 - alpha_bar_t)) * epsilon_pred
+        ) + torch.sqrt(betas[t]) * noise
+
+    return torch.tanh(a).item() * 2.0  # scale to [-2,2]
 
 # =======================
 # ✅ Training loop
@@ -115,19 +187,28 @@ for ep in range(num_episodes):
         q_values = []
 
         for _ in range(10):
-            noise = torch.randn((1, 1)).to(device)
-            a = policy(s_tensor, noise)
-            a = 2.0 * a  # scale
+            # noise = torch.randn((1, 1)).to(device)
+            # a = policy(s_tensor, noise)
+            # a = 2.0 * a  # scale
+        #     a_val = a.item()
+        #     actions.append(a_val)
 
-            a_val = a.item()
-            actions.append(a_val)
+        #     q_val = q_net(s_tensor, a).item()
+        #     q_values.append(q_val)
 
-            q_val = q_net(s_tensor, a).item()
-            q_values.append(q_val)
+        # # ✅ Q-guided selection
+        # best_idx = np.argmax(q_values)
+        # a = actions[best_idx]
+        
+            a = sample_action(s)
+            actions.append(a)
 
-        # ✅ Q-guided selection
-        best_idx = np.argmax(q_values)
-        a = actions[best_idx]
+            s_tensor = torch.tensor(s, dtype=torch.float32).unsqueeze(0).to(device)
+            a_tensor = torch.tensor([[a]], dtype=torch.float32).to(device)
+
+            q_values.append(q_net(s_tensor, a_tensor).item())
+
+        a = actions[np.argmax(q_values)]
 
         # ✅ Environment step
         s_next, r, done = env.step(a)
