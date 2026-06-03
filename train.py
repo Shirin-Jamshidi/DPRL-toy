@@ -55,9 +55,29 @@ def train_q(batch_size=64):
         s_next_repeat = s_next.unsqueeze(0).repeat(n_samples, 1, 1)  # (N, B, 3)
         s_next_flat = s_next_repeat.view(-1, 3)                     # (N*B, 3)
 
-        noise = torch.randn_like(s_next_flat)[:, :1]                # (N*B, 1)
-        actions = policy(s_next_flat, noise)                        # [-1,1]
-        actions = 2.0 * actions                                     # scale to [-2,2]
+        # noise = torch.randn_like(s_next_flat)[:, :1]                # (N*B, 1)
+        # actions = policy(s_next_flat, noise)                        # [-1,1]
+        # actions = 2.0 * actions  
+         
+        n = s_next_flat.shape[0]
+        # sample timestep
+        t = torch.randint(0, T, (n,), device=device)
+        t_normalized = t.float().unsqueeze(1) / T
+
+        # start from random noise (initial action)
+        a = torch.randn((n,1)).to(device)
+
+        # one-step denoising (approximate)
+        epsilon_pred = policy(s_next_flat, a, t_normalized)
+
+        alpha_t = alphas[t].unsqueeze(1)
+        alpha_bar_t = alpha_bar[t].unsqueeze(1)
+
+        actions = (1 / torch.sqrt(alpha_t)) * (
+            a - ((1 - alpha_t) / torch.sqrt(1 - alpha_bar_t)) * epsilon_pred
+        )
+
+        actions = torch.tanh(actions) * 2.0
 
         q_vals = target_q(s_next_flat, actions)                     # (N*B, 1)
         q_vals = q_vals.view(n_samples, -1, 1)                      # (N, B, 1)
@@ -199,7 +219,7 @@ for ep in range(num_episodes):
         # # ✅ Q-guided selection
         # best_idx = np.argmax(q_values)
         # a = actions[best_idx]
-        
+
             a = sample_action(s)
             actions.append(a)
 
