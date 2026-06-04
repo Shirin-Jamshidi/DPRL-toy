@@ -136,13 +136,25 @@ def expert_policy(state):
 
     theta = np.arctan2(sin_theta, cos_theta)
 
-    # ✅ simple stabilizing controller
-    k1 = 2.0
-    k2 = 0.5
+    # ✅ Energy-based term (swing-up)
+    g = 10.0
+    m = 1.0
+    l = 1.0
 
-    action = -k1 * theta - k2 * theta_dot
+    desired_energy = 0.0
+    current_energy = 0.5 * m * (l * theta_dot) ** 2 + m * g * l * (1 - cos_theta)
 
-    return np.clip(action, -2.0, 2.0)
+    energy_error = current_energy - desired_energy
+
+    # ✅ Control terms
+    k_energy = 1.0
+    k_p = 5.0
+    k_d = 1.0
+
+    # Swing-up + stabilization
+    u = k_energy * theta_dot * energy_error - k_p * theta - k_d * theta_dot
+
+    return np.clip(u, -2.0, 2.0)
 
 # =======================
 # ✅ Generate offline data
