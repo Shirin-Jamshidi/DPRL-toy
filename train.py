@@ -128,6 +128,48 @@ def train_q(batch_size=64):
     loss.backward()
     q_optimizer.step()
 
+# =======================
+# ✅ Expert policy for Pendulum (offline data)
+# =======================
+def expert_policy(state):
+    cos_theta, sin_theta, theta_dot = state
+
+    theta = np.arctan2(sin_theta, cos_theta)
+
+    # ✅ simple stabilizing controller
+    k1 = 2.0
+    k2 = 0.5
+
+    action = -k1 * theta - k2 * theta_dot
+
+    return np.clip(action, -2.0, 2.0)
+
+# =======================
+# ✅ Generate offline data
+# =======================
+def generate_offline_data(env, buffer, num_episodes=200):
+    print("Generating offline dataset...")
+
+    for ep in range(num_episodes):
+        s = env.reset()
+
+        for _ in range(200):
+            a = expert_policy(s)
+
+            s_next, r, done = env.step(a)
+
+            buffer.add(s, a, r, s_next)
+
+            s = s_next
+
+            if done:
+                break
+
+    print(f"Offline dataset size: {len(buffer)}")
+
+
+# ✅ Generate D_off
+generate_offline_data(env, buffer, num_episodes=200)
 
 # =======================
 # ✅ Diffusion policy training (Eq 4)
@@ -171,7 +213,6 @@ def train_policy(batch_size=64):
     policy_optimizer.zero_grad()
     loss.backward()
     policy_optimizer.step()
-
 
 # =======================
 # ✅ Training loop
