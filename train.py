@@ -20,6 +20,28 @@ env = GymEnv()
 buffer = ReplayBuffer()
 
 # =======================
+# ✅ Load offline dataset (D_off)
+# =======================
+def load_offline_data(buffer, filename="offline_data.npz"):
+    print("Loading offline dataset...")
+
+    data = np.load(filename)
+
+    states = data["states"]
+    actions = data["actions"]
+    rewards = data["rewards"]
+    next_states = data["next_states"]
+
+    for i in range(len(states)):
+        buffer.add(states[i], float(actions[i]), rewards[i], next_states[i])
+
+    print(f"Loaded {len(states)} offline samples")
+
+
+# ✅ CALL IT HERE
+load_offline_data(buffer, filename="cartpole_demo_data.npz")
+
+# =======================
 # ✅ Models
 # =======================
 q_net = QNetwork().to(device)
@@ -128,60 +150,6 @@ def train_q(batch_size=64):
     loss.backward()
     q_optimizer.step()
 
-# =======================
-# ✅ Expert policy for Pendulum (offline data)
-# =======================
-def expert_policy(state):
-    cos_theta, sin_theta, theta_dot = state
-
-    theta = np.arctan2(sin_theta, cos_theta)
-
-    # ✅ Energy-based term (swing-up)
-    g = 10.0
-    m = 1.0
-    l = 1.0
-
-    desired_energy = 0.0
-    current_energy = 0.5 * m * (l * theta_dot) ** 2 + m * g * l * (1 - cos_theta)
-
-    energy_error = current_energy - desired_energy
-
-    # ✅ Control terms
-    k_energy = 1.0
-    k_p = 5.0
-    k_d = 1.0
-
-    # Swing-up + stabilization
-    u = k_energy * theta_dot * energy_error - k_p * theta - k_d * theta_dot
-
-    return np.clip(u, -2.0, 2.0)
-
-# =======================
-# ✅ Generate offline data
-# =======================
-def generate_offline_data(env, buffer, num_episodes=200):
-    print("Generating offline dataset...")
-
-    for ep in range(num_episodes):
-        s = env.reset()
-
-        for _ in range(200):
-            a = expert_policy(s)
-
-            s_next, r, done = env.step(a)
-
-            buffer.add(s, a, r, s_next)
-
-            s = s_next
-
-            if done:
-                break
-
-    print(f"Offline dataset size: {len(buffer)}")
-
-
-# ✅ Generate D_off
-generate_offline_data(env, buffer, num_episodes=200)
 
 # =======================
 # ✅ Diffusion policy training (Eq 4)
