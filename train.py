@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+import math
 
 from env import ContinuousCartPole
 from buffer import ReplayBuffer
@@ -115,7 +116,8 @@ def train_policy(batch_size=256):
 
     beta = 0.02
     alpha = 1 - beta
-    a_noisy = torch.sqrt(alpha)*a + torch.sqrt(1-alpha)*noise
+    a_noisy = math.sqrt(alpha) * a + math.sqrt(1 - alpha) * noise
+
 
     pred = policy(s, a_noisy, t)
 
