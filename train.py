@@ -448,7 +448,7 @@ def train_policy(batch_size=64):
 # =======================
 # ✅ Training loop
 # =======================
-num_episodes = 500
+num_episodes = 2000
 max_steps = 200
 
 reward_history = []
