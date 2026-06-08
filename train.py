@@ -13,7 +13,7 @@ env = ContinuousCartPole()
 buffer = ReplayBuffer()
 
 # load offline data
-buffer.load_offline("cartpole_demo_data.npz")
+# buffer.load_offline("cartpole_demo_data.npz")
 
 q_net = QNetwork().to(device)
 target_q = QNetwork().to(device)
