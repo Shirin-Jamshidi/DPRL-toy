@@ -19,15 +19,15 @@ class QNetwork(nn.Module):
 
 
 class DiffusionPolicy(nn.Module):
-    def __init__(self, state_dim=4, T=10):
+    def __init__(self, state_dim=4, action_dim=2, T=10):
         super().__init__()
         self.T = T
         self.net = nn.Sequential(
-            nn.Linear(state_dim + 1 + 1, 256),  # s, a_noisy, t_norm
+            nn.Linear(state_dim + action_dim + 1, 256),  # s, a_noisy, t_norm
             nn.ReLU(),
             nn.Linear(256, 256),
             nn.ReLU(),
-            nn.Linear(256, 1)                    # predicted noise ε
+            nn.Linear(256, action_dim)           # predicted noise ε
         )
 
     def forward(self, s, a_noisy, t_norm):
@@ -37,14 +37,14 @@ class DiffusionPolicy(nn.Module):
 def sample_action(policy, state, alpha_bars, T, n_samples=64):
     """
     DDPM reverse process: start from x_T ~ N(0,I) and denoise to x_0.
-    Returns (n_samples, 1) tensor of continuous action proposals.
+    Returns (n_samples, 1) tensor of discrete action proposals.
     """
     device = next(policy.parameters()).device
 
     s = torch.tensor(state, dtype=torch.float32, device=device)
     s = s.unsqueeze(0).expand(n_samples, -1)
 
-    x = torch.randn(n_samples, 1, device=device)
+    x = torch.randn(n_samples, 2, device=device)
 
     for t in range(T, 0, -1):
         t_norm   = torch.full((n_samples, 1), t / T, dtype=torch.float32, device=device)
@@ -63,4 +63,4 @@ def sample_action(policy, state, alpha_bars, T, n_samples=64):
             sigma = torch.sqrt((1.0 - ab_prev) / (1.0 - ab_t) * (1.0 - alpha_t))
             x = x + sigma * torch.randn_like(x)
 
-    return x.clamp(-1.0, 1.0)
+    return x.argmax(dim=-1, keepdim=True).float()
