@@ -39,7 +39,7 @@ def load_offline_data(buffer, filename="offline_data.npz"):
 
 
 # ✅ CALL IT HERE
-load_offline_data(buffer, filename="cartpole_demo_data.npz")
+load_offline_data(buffer, filename="pendulum_demo_data.npz")
 
 # =======================
 # ✅ Models
