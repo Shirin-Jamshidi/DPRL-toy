@@ -7,46 +7,6 @@ import matplotlib.pyplot as plt
 # =======================
 # ✅ Hyperparameters
 # =======================
-NUM_BUCKETS = (6, 6, 6)   #Great — this is a **very important step**, but we need to be careful:
-
-👉 CartPole = **discrete actions + easy discretization**  
-👉 Pendulum = **continuous actions + nonlinear dynamics**
-
-So we cannot directly copy the CartPole Q-learning setup — we must adapt it properly ✅
-
----
-
-# 🧠 ✅ Key Design Changes for Pendulum
-
-| Component | CartPole | Pendulum |
-|----------|----------|----------|
-| State | 4D | 3D |
-| Action | discrete (0/1) | continuous [-2,2] |
-| Q-table | direct | must discretize actions too |
-
----
-
-👉 So for Pendulum, we will:
-
-✅ Discretize **state + action**  
-✅ Learn a **Q-table over (state, action)**  
-✅ Use argmax over discrete actions  
-✅ Apply real action as float
-
----
-
-# ✅ ✅ ✅ FULL WORKING CODE (Pendulum Q-learning + demo collection)
-
-```python
-import gymnasium as gym
-import numpy as np
-import math
-import random
-import matplotlib.pyplot as plt
-
-# =======================
-# ✅ Hyperparameters
-# =======================
 NUM_BUCKETS = (6, 6, 12)   # cosθ, sinθ, θ_dot
 NUM_ACTIONS = 21           # discretized actions
 
