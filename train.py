@@ -1,163 +1,145 @@
 import torch
-import torch.nn as nn
-import torch.optim as optim
 import numpy as np
-import gymnasium as gym
-import matplotlib.pyplot as plt
 
-# =======================
-# ✅ Device
-# =======================
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print("Using device:", device)
+from env import ContinuousCartPole
+from buffer import ReplayBuffer
+from models import QNetwork, DiffusionPolicy, sample_action
 
-# =======================
-# ✅ Environment
-# =======================
-env = gym.make("CartPole-v1")
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
-state_dim = 4
-action_dim = 2
+env = ContinuousCartPole()
+buffer = ReplayBuffer()
 
-# =======================
-# ✅ Actor Network
-# =======================
-class Actor(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(state_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, action_dim)
-        )
+# load offline data
+buffer.load_offline("cartpole_demo_data.npz")
 
-    def forward(self, s):
-        logits = self.net(s)
-        return torch.softmax(logits, dim=-1)
+q_net = QNetwork().to(device)
+target_q = QNetwork().to(device)
+target_q.load_state_dict(q_net.state_dict())
 
+policy = DiffusionPolicy().to(device)
 
-# =======================
-# ✅ Critic Network
-# =======================
-class Critic(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(state_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, 1)
-        )
-
-    def forward(self, s):
-        return self.net(s)
-
-
-actor = Actor().to(device)
-critic = Critic().to(device)
-
-actor_optimizer = optim.Adam(actor.parameters(), lr=1e-3)
-critic_optimizer = optim.Adam(critic.parameters(), lr=1e-3)
+q_opt = torch.optim.Adam(q_net.parameters(), lr=1e-3)
+p_opt = torch.optim.Adam(policy.parameters(), lr=1e-4)
 
 gamma = 0.99
 
+# FQI Update 
+def train_q(batch_size=256):
 
-# =======================
-# ✅ Load offline data (optional pretraining)
-# =======================
-def load_data(filename):
-    data = np.load(filename)
-    return data["states"], data["actions"]
+    s,a,r,s2 = buffer.sample(batch_size)
 
+    s = torch.tensor(s, dtype=torch.float32).to(device)
+    a = torch.tensor(a, dtype=torch.float32).to(device)
+    r = torch.tensor(r, dtype=torch.float32).to(device)
+    s2 = torch.tensor(s2, dtype=torch.float32).to(device)
 
-def pretrain_actor_bc(actor, states, actions, epochs=5):
-    print("Pretraining actor with behavior cloning...")
+    # max over next action
+    a_candidates = torch.linspace(-1,1,21).view(21,1).to(device)
 
-    states = torch.tensor(states, dtype=torch.float32).to(device)
-    actions = torch.tensor(actions, dtype=torch.long).to(device)
+    s2_expand = s2.unsqueeze(1).repeat(1,21,1)
+    a_expand = a_candidates.unsqueeze(0).repeat(len(s2),1,1)
 
-    for ep in range(epochs):
-        logits = actor(states)
-        loss = nn.CrossEntropyLoss()(logits, actions)
+    q_vals = target_q(
+        s2_expand.reshape(-1,4),
+        a_expand.reshape(-1,1)
+    )
 
-        actor_optimizer.zero_grad()
-        loss.backward()
-        actor_optimizer.step()
+    q_vals = q_vals.reshape(len(s2),21,1)
+    max_q, _ = q_vals.max(dim=1)
 
-        print(f"BC Epoch {ep}, Loss: {loss.item():.4f}")
+    target = r + gamma * max_q
 
+    loss = ((q_net(s,a) - target.detach())**2).mean()
 
-# ✅ load and pretrain
-states, actions = load_data("cartpole_demo_data.npz")
-pretrain_actor_bc(actor, states, actions, epochs=10)
+    q_opt.zero_grad()
+    loss.backward()
+    q_opt.step()
 
+    # update target
+    target_q.load_state_dict(q_net.state_dict())
 
-# =======================
-# ✅ Training loop (Actor-Critic)
-# =======================
-num_episodes = 500
-max_steps = 200
+# QVPO Advantage
+def compute_weights(s, a):
 
-reward_history = []
+    q = q_net(s,a)
 
-for ep in range(num_episodes):
-    s, _ = env.reset()
-    total_reward = 0
+    # estimate V(s)
+    a_samples = torch.linspace(-1,1,21).view(21,1).to(device)
+    s_expand = s.unsqueeze(1).repeat(1,21,1)
+    a_expand = a_samples.unsqueeze(0).repeat(len(s),1,1)
 
-    for t in range(max_steps):
-        s_tensor = torch.tensor(s, dtype=torch.float32).unsqueeze(0).to(device)
+    q_all = q_net(
+        s_expand.reshape(-1,4),
+        a_expand.reshape(-1,1)
+    )
 
-        # sample action
-        probs = actor(s_tensor)
-        dist = torch.distributions.Categorical(probs)
-        a = dist.sample()
+    q_all = q_all.reshape(len(s),21,1)
+    v, _ = q_all.max(dim=1)
 
-        s_next, r, terminated, truncated, _ = env.step(a.item())
-        done = terminated or truncated
+    A = q - v
+    return torch.clamp(A, min=0.0)
 
-        # critic values
-        v = critic(s_tensor)
-        s_next_tensor = torch.tensor(s_next, dtype=torch.float32).unsqueeze(0).to(device)
-        v_next = critic(s_next_tensor).detach()
+# Diffusion Update
+def train_policy(batch_size=256):
 
-        target = r + gamma * v_next * (1 - done)
-        advantage = (target - v).detach()
+    s,a,_,_ = buffer.sample(batch_size)
 
-        # ✅ actor loss
-        actor_loss = -dist.log_prob(a) * advantage
+    s = torch.tensor(s, dtype=torch.float32).to(device)
+    a = torch.tensor(a, dtype=torch.float32).to(device)
 
-        # ✅ critic loss
-        critic_loss = (v - target) ** 2
+    weights = compute_weights(s,a).detach()
 
-        # update actor
-        actor_optimizer.zero_grad()
-        actor_loss.backward()
-        actor_optimizer.step()
+    t = torch.randint(0, policy.T, (len(s),1)).float().to(device)
 
-        # update critic
-        critic_optimizer.zero_grad()
-        critic_loss.backward()
-        critic_optimizer.step()
+    noise = torch.randn_like(a)
 
-        s = s_next
-        total_reward += r
+    alpha = 0.9
+    a_noisy = (alpha**0.5)*a + ((1-alpha)**0.5)*noise
+
+    pred = policy(s, a_noisy, t)
+
+    loss = ((noise - pred)**2 * weights).mean()
+
+    p_opt.zero_grad()
+    loss.backward()
+    p_opt.step()
+
+# Action Selection
+def select_action(state):
+
+    samples = sample_action(policy, state)
+
+    s = torch.tensor(state, dtype=torch.float32).to(device)
+    s = s.unsqueeze(0).repeat(len(samples),1)
+
+    q_vals = q_net(s, samples.to(device))
+
+    best = torch.argmax(q_vals)
+
+    return samples[best].item()
+
+# Main Training Loop
+
+episodes = 1000
+
+for ep in range(episodes):
+
+    s = env.reset()
+
+    for step in range(200):
+
+        a = select_action(s)
+        s2, r, done = env.step(a)
+
+        buffer.add(s, a, r, s2)
+
+        s = s2
+
+        train_q()
+        train_policy()
 
         if done:
             break
 
-    reward_history.append(total_reward)
-
-    if ep % 20 == 0:
-        print(f"Episode {ep}, Reward: {total_reward:.2f}")
-
-
-# =======================
-# ✅ Plot results
-# =======================
-plt.figure()
-plt.plot(reward_history)
-plt.xlabel("Episode")
-plt.ylabel("Reward")
-plt.title("CartPole Actor-Critic")
-plt.savefig("cartpole_actor_critic.png")
-
-print("✅ Done. Plot saved.")
+    print(f"Episode {ep} done")

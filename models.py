@@ -1,27 +1,30 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 class QNetwork(nn.Module):
-    def __init__(self, input_dim):
-        super(QNetwork, self).__init__()
-
-        self.fc1 = nn.Linear(input_dim, 128)
-        self.fc2 = nn.Linear(128, 128)
-        self.fc3 = nn.Linear(128, 1)
-
-    def forward(self, s, a):
-        x = torch.cat([s, a], dim=-1)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        return self.fc3(x)
-    
-class DiffusionPolicy(nn.Module):
-    def __init__(self, input_dim):
+    def __init__(self, state_dim=4):
         super().__init__()
 
         self.net = nn.Sequential(
-            nn.Linear(input_dim, 128),
+            nn.Linear(state_dim + 1, 128),
+            nn.ReLU(),
+            nn.Linear(128, 128),
+            nn.ReLU(),
+            nn.Linear(128, 1)
+        )
+
+    def forward(self, s, a):
+        x = torch.cat([s, a], dim=-1)
+        return self.net(x)
+    
+
+class DiffusionPolicy(nn.Module):
+    def __init__(self, state_dim=4, T=10):
+        super().__init__()
+        self.T = T
+
+        self.net = nn.Sequential(
+            nn.Linear(state_dim + 1 + 1, 128),  # s + a + t
             nn.ReLU(),
             nn.Linear(128, 128),
             nn.ReLU(),
@@ -29,5 +32,19 @@ class DiffusionPolicy(nn.Module):
         )
 
     def forward(self, s, a, t):
-        x = torch.cat([s, a, t], dim=-1)
-        return self.net(x)
+        return self.net(torch.cat([s, a, t], dim=-1))
+    
+def sample_action(policy, state, n_samples=32):
+    device = next(policy.parameters()).device
+
+    s = torch.tensor(state, dtype=torch.float32).to(device)
+    s = s.unsqueeze(0).repeat(n_samples,1)
+
+    a = torch.randn(n_samples,1).to(device)
+
+    for t in reversed(range(policy.T)):
+        t_tensor = torch.ones((n_samples,1)).to(device) * t
+        noise_pred = policy(s, a, t_tensor)
+        a = a - noise_pred * 0.1
+
+    return a
