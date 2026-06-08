@@ -2,7 +2,7 @@ import gymnasium as gym
 
 class GymEnv:
     def __init__(self):
-        self.env = gym.make("Pendulum-v1")
+        self.env = gym.make("CartPole-v1")
 
     def reset(self):
         state, _ = self.env.reset()
