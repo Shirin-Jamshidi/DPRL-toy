@@ -36,17 +36,25 @@ def train_q(batch_size=256):
     s2 = torch.tensor(s2, dtype=torch.float32).to(device)
 
     # max over next action
-    a_candidates = torch.linspace(-1,1,101).view(101,1).to(device)
+    # number of action samples
+    N = 101
 
-    s2_expand = s2.unsqueeze(1).repeat(1,21,1)
-    a_expand = a_candidates.unsqueeze(0).repeat(len(s2),1,1)
+    a_candidates = torch.linspace(-1,1,N, device=device).view(1,N,1)
 
-    q_vals = target_q(
-        s2_expand.reshape(-1,4),
-        a_expand.reshape(-1,1)
-    )
+    # expand states
+    s2_expand = s2.unsqueeze(1).expand(-1, N, -1)     # (B, N, 4)
+    a_expand = a_candidates.expand(len(s2), -1, -1)   # (B, N, 1)
 
-    q_vals = q_vals.reshape(len(s2),21,1)
+    # flatten consistently
+    s2_flat = s2_expand.reshape(-1, 4)   # (B*N, 4)
+    a_flat  = a_expand.reshape(-1, 1)    # (B*N, 1)
+
+    # compute Q
+    q_vals = target_q(s2_flat, a_flat)
+
+    # reshape back
+    q_vals = q_vals.view(len(s2), N, 1)
+
     max_q, _ = q_vals.max(dim=1)
 
     target = r + gamma * max_q
@@ -68,17 +76,21 @@ def compute_weights(s, a):
     q = q_net(s,a)
 
     # estimate V(s)
-    a_samples = torch.linspace(-1,1,21).view(21,1).to(device)
-    s_expand = s.unsqueeze(1).repeat(1,21,1)
-    a_expand = a_samples.unsqueeze(0).repeat(len(s),1,1)
+    N = 101
 
-    q_all = q_net(
-        s_expand.reshape(-1,4),
-        a_expand.reshape(-1,1)
-    )
+    a_samples = torch.linspace(-1,1,N, device=device).view(1,N,1)
 
-    q_all = q_all.reshape(len(s),21,1)
+    s_expand = s.unsqueeze(1).expand(-1, N, -1)   # (B, N, 4)
+    a_expand = a_samples.expand(len(s), -1, -1)   # (B, N, 1)
+
+    s_flat = s_expand.reshape(-1, 4)
+    a_flat = a_expand.reshape(-1, 1)
+
+    q_all = q_net(s_flat, a_flat)
+    q_all = q_all.view(len(s), N, 1)
+
     v, _ = q_all.max(dim=1)
+
 
     A = q - v
     # normalize
