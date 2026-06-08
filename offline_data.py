@@ -13,16 +13,19 @@ def q_policy(state):
     cos_theta, sin_theta, theta_dot = state
     theta = np.arctan2(sin_theta, cos_theta)
 
-    # ✅ sample candidate actions
     candidate_actions = np.linspace(-2, 2, 21)
 
     best_a = 0
     best_value = -np.inf
 
     for a in candidate_actions:
-        # ✅ pseudo Q-value (reward shaping)
-        # reward ≈ -(theta^2 + 0.1 * theta_dot^2 + 0.001 * a^2)
-        value = -(theta**2 + 0.1 * theta_dot**2 + 0.001 * a**2)
+        # ✅ objective
+        value = (
+            -theta**2
+            - 0.1 * theta_dot**2
+            + 0.5 * theta_dot * a   # ✅ encourages actuation
+            - 0.001 * a**2
+        )
 
         if value > best_value:
             best_value = value
