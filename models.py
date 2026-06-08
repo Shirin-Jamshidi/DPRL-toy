@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import numpy as np
 
 
 class QNetwork(nn.Module):
@@ -22,7 +23,7 @@ class DiffusionPolicy(nn.Module):
         super().__init__()
         self.T = T
         self.net = nn.Sequential(
-            nn.Linear(state_dim + 1 + 1, 256),  # s, a_noisy, t_normalised
+            nn.Linear(state_dim + 1 + 1, 256),  # s, a_noisy, t_norm
             nn.ReLU(),
             nn.Linear(256, 256),
             nn.ReLU(),
@@ -35,31 +36,29 @@ class DiffusionPolicy(nn.Module):
 
 def sample_action(policy, state, alpha_bars, T, n_samples=64):
     """
-    DDPM reverse process: x_T ~ N(0,I), then denoise step-by-step to x_0.
-    Returns tensor of shape (n_samples, 1) on the same device as policy.
+    DDPM reverse process: start from x_T ~ N(0,I) and denoise to x_0.
+    Returns (n_samples, 1) tensor of continuous action proposals.
     """
     device = next(policy.parameters()).device
 
     s = torch.tensor(state, dtype=torch.float32, device=device)
     s = s.unsqueeze(0).expand(n_samples, -1)
 
-    # Start from pure Gaussian noise at t=T
     x = torch.randn(n_samples, 1, device=device)
 
     for t in range(T, 0, -1):
-        t_norm    = torch.full((n_samples, 1), t / T,
-                               dtype=torch.float32, device=device)
-        eps_pred  = policy(s, x, t_norm)
+        t_norm   = torch.full((n_samples, 1), t / T, dtype=torch.float32, device=device)
+        eps_pred = policy(s, x, t_norm)
 
-        ab_t      = alpha_bars[t]
-        ab_prev   = alpha_bars[t - 1]
-        alpha_t   = ab_t / ab_prev                        # α_t = ᾱ_t / ᾱ_{t-1}
+        ab_t    = alpha_bars[t]
+        ab_prev = alpha_bars[t - 1]
+        alpha_t = ab_t / ab_prev                 # α_t = ᾱ_t / ᾱ_{t-1}
 
-        # DDPM mean: x_{t-1} = (1/√α_t) * (x_t - (1-α_t)/√(1-ᾱ_t) * ε)
+        # DDPM reverse mean
         x = (1.0 / torch.sqrt(alpha_t)) * (
             x - (1.0 - alpha_t) / torch.sqrt(1.0 - ab_t) * eps_pred
         )
-        # Add noise for t > 1 (stochastic reverse); deterministic at t=1
+        # Add stochastic noise for t > 1
         if t > 1:
             sigma = torch.sqrt((1.0 - ab_prev) / (1.0 - ab_t) * (1.0 - alpha_t))
             x = x + sigma * torch.randn_like(x)

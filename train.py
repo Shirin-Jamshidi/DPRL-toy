@@ -11,55 +11,34 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 env    = ContinuousCartPole()
 buffer = ReplayBuffer()
-
-# ── Offline data ──────────────────────────────────────────────────────────────
-# If the demo file doesn't exist, generate one from a random agent.
-# NOTE: the quality of offline data matters a lot. A random agent produces
-# episodes of ~20 steps, so every bootstrapped Q-target will be low and
-# similar, making A(s,a) ≈ 0 everywhere → no diffusion policy gradient.
-# We therefore do an offline pre-training phase AFTER loading the data.
-if not os.path.exists("cartpole_demo_data.npz"):
-    import gymnasium as gym
-    _env = gym.make("CartPole-v1")
-    ss, aa, rr, ss2 = [], [], [], []
-    for _ in range(200):
-        obs, _ = _env.reset()
-        for _ in range(500):
-            a = _env.action_space.sample()
-            obs2, r, term, trunc, _ = _env.step(a)
-            ss.append(obs); aa.append(a); rr.append(r); ss2.append(obs2)
-            obs = obs2
-            if term or trunc:
-                break
-    np.savez("cartpole_demo_data.npz",
-             states=np.array(ss), actions=np.array(aa),
-             rewards=np.array(rr), next_states=np.array(ss2))
-    print(f"Generated {len(ss)} offline transitions.")
-
 buffer.load_offline("cartpole_demo_data.npz")
 
 # ── Networks ──────────────────────────────────────────────────────────────────
 q_net    = QNetwork().to(device)
 target_q = QNetwork().to(device)
 target_q.load_state_dict(q_net.state_dict())
+policy   = DiffusionPolicy().to(device)
 
-policy = DiffusionPolicy().to(device)
-
-# Lower Q learning rate → more stable Bellman targets
 q_opt = torch.optim.Adam(q_net.parameters(), lr=3e-4)
 p_opt = torch.optim.Adam(policy.parameters(), lr=1e-4)
 
 gamma = 0.99
 T     = policy.T
 
-# Cosine noise schedule (smoother than linear for small T=10)
-# alpha_bars[t] = ᾱ_t; index 0 → no noise, index T → full noise
+# Cosine noise schedule, shape (T+1,): alpha_bars[0]≈1, alpha_bars[T]≈small
 steps      = torch.arange(T + 1, dtype=torch.float32)
 f          = torch.cos(((steps / T) + 0.008) / 1.008 * (np.pi / 2)) ** 2
-alpha_bars = (f / f[0]).to(device)   # shape (T+1,)
+alpha_bars = (f / f[0]).to(device)
+
+# The two real actions in the environment, as continuous values
+# EVERYTHING that needs max_a or E_a uses ONLY these two points.
+# Using linspace(-1,1,N) would evaluate Q at values it was NEVER trained on
+# (offline data has only a∈{-1,+1}), causing wild extrapolation that makes
+# V(s) garbage and kills the advantage signal entirely.
+A_BOTH = torch.tensor([[-1.0], [1.0]], device=device)   # (2,1)
 
 
-# ── Bellman / FQI update ──────────────────────────────────────────────────────
+# ── FQI / Bellman update ──────────────────────────────────────────────────────
 def train_q(batch_size=256):
     s, a, r, s2 = buffer.sample(batch_size)
     s  = torch.tensor(s,  dtype=torch.float32, device=device)
@@ -67,14 +46,13 @@ def train_q(batch_size=256):
     r  = torch.tensor(r,  dtype=torch.float32, device=device)
     s2 = torch.tensor(s2, dtype=torch.float32, device=device)
 
-    N      = 51
-    a_cand = torch.linspace(-1, 1, N, device=device).view(1, N, 1)
-
+    # max_a' Q(s', a') over the TWO real actions only
     with torch.no_grad():
-        s2_flat = s2.unsqueeze(1).expand(-1, N, -1).reshape(-1, 4)
-        a_flat  = a_cand.expand(len(s2), -1, -1).reshape(-1, 1)
-        q_next  = target_q(s2_flat, a_flat).view(len(s2), N)
-        max_q   = q_next.max(dim=1, keepdim=True).values    # (B,1)
+        # s2: (B,4) → (B,2,4); A_BOTH: (2,1) → (B,2,1)
+        s2_exp = s2.unsqueeze(1).expand(-1, 2, -1).reshape(-1, 4)
+        a_exp  = A_BOTH.unsqueeze(0).expand(len(s2), -1, -1).reshape(-1, 1)
+        q_next = target_q(s2_exp, a_exp).view(len(s2), 2)
+        max_q  = q_next.max(dim=1, keepdim=True).values   # (B,1)
 
     target = r + gamma * max_q
     loss   = ((q_net(s, a) - target) ** 2).mean()
@@ -88,24 +66,18 @@ def train_q(batch_size=256):
 
 # ── QVPO advantage weights ────────────────────────────────────────────────────
 def compute_weights(s, a):
-    # All inside no_grad: weights are treated as fixed coefficients
     with torch.no_grad():
-        q = q_net(s, a)                              # (B,1)
+        q = q_net(s, a)                                   # (B,1)
 
-        N      = 51
-        a_samp = torch.linspace(-1, 1, N, device=device).view(1, N, 1)
-        s_flat = s.unsqueeze(1).expand(-1, N, -1).reshape(-1, 4)
-        a_flat = a_samp.expand(len(s), -1, -1).reshape(-1, 1)
-        q_all  = q_net(s_flat, a_flat).view(len(s), N)
+        # V(s) = E_{a~π}[Q(s,a)] estimated over the TWO in-distribution actions
+        s_exp  = s.unsqueeze(1).expand(-1, 2, -1).reshape(-1, 4)
+        a_exp  = A_BOTH.unsqueeze(0).expand(len(s), -1, -1).reshape(-1, 1)
+        q_both = q_net(s_exp, a_exp).view(len(s), 2)
+        v      = q_both.mean(dim=1, keepdim=True)         # (B,1)
 
-        # V(s) = E_a[Q(s,a)] per eq. 6 — NOT max
-        v = q_all.mean(dim=1, keepdim=True)
+    A       = q - v                                       # eq. 6
+    weights = torch.clamp(A, min=0.0)                    # eq. 5
 
-    A       = q - v                                  # (B,1)
-    weights = torch.clamp(A, min=0.0)               # eq. 5
-
-    # Rescale non-zero weights to unit mean so the loss magnitude is stable
-    # even when most advantages are small. This does NOT change their ordering.
     nz = weights[weights > 0]
     if nz.numel() > 0:
         weights = weights / (nz.mean() + 1e-8)
@@ -118,18 +90,16 @@ def train_policy(batch_size=256):
     s = torch.tensor(s, dtype=torch.float32, device=device)
     a = torch.tensor(a, dtype=torch.float32, device=device)
 
-    weights = compute_weights(s, a)                  # (B,1)
+    weights = compute_weights(s, a)
 
-    # Sample a random diffusion timestep t ∈ [1, T]
     t_idx   = torch.randint(1, T + 1, (len(s),), device=device)
-    # Normalise t to [0,1] so the network doesn't need to know T
-    t_float = t_idx.float().unsqueeze(-1) / T
+    t_norm  = t_idx.float().unsqueeze(-1) / T
 
     noise   = torch.randn_like(a)
-    ab      = alpha_bars[t_idx].unsqueeze(-1)        # ᾱ_t  shape (B,1)
+    ab      = alpha_bars[t_idx].unsqueeze(-1)
     a_noisy = torch.sqrt(ab) * a + torch.sqrt(1.0 - ab) * noise
 
-    pred = policy(s, a_noisy, t_float)
+    pred = policy(s, a_noisy, t_norm)
     loss = ((noise - pred) ** 2 * weights).mean()
 
     p_opt.zero_grad(); loss.backward(); p_opt.step()
@@ -138,19 +108,23 @@ def train_policy(batch_size=256):
 # ── Action selection ──────────────────────────────────────────────────────────
 def select_action(state):
     with torch.no_grad():
-        samples = sample_action(policy, state, alpha_bars, T)  # (K,1)
-        s_rep   = torch.tensor(state, dtype=torch.float32, device=device)
-        s_rep   = s_rep.unsqueeze(0).expand(len(samples), -1)
-        q_vals  = q_net(s_rep, samples)
-        best    = q_vals.argmax()
-    return samples[best].item()
+        samples = sample_action(policy, state, alpha_bars, T)   # (K,1)
+        # Snap to the two real actions before Q evaluation.
+        # The diffusion model outputs a continuous sign preference;
+        # evaluating Q at raw intermediate values causes OOD extrapolation.
+        snapped = torch.sign(samples)
+        snapped[snapped == 0] = 1.0                             # break ties
+
+        s_rep  = torch.tensor(state, dtype=torch.float32, device=device)
+        s_rep  = s_rep.unsqueeze(0).expand(len(snapped), -1)
+        q_vals = q_net(s_rep, snapped)
+        best   = q_vals.argmax()
+    return samples[best].item()    # return the original continuous value for env
 
 
-# ── Offline pre-training of Q ─────────────────────────────────────────────────
-# Without this, Q is random when online episodes start, the advantage is noise,
-# and the policy never gets a meaningful gradient.
+# ── Offline Q pre-training ────────────────────────────────────────────────────
 print("Pre-training Q on offline buffer …")
-for i in range(3000):
+for _ in range(5000):
     train_q()
 print("Pre-training done.")
 
@@ -161,11 +135,10 @@ episode_rewards = []
 for ep in range(1000):
     s            = env.reset()
     total_reward = 0
-    # Decay exploration from 30% → 5% over training
-    eps = max(0.05, 0.30 * (0.994 ** ep))
+    eps          = max(0.05, 0.30 * (0.994 ** ep))
 
     for step in range(200):
-        a  = np.random.uniform(-1, 1) if np.random.rand() < eps else select_action(s)
+        a           = np.random.uniform(-1, 1) if np.random.rand() < eps else select_action(s)
         s2, r, done = env.step(a)
 
         buffer.add(s, a, r, s2)
@@ -185,17 +158,15 @@ for ep in range(1000):
         print(f"Episode {ep:4d} | Reward: {total_reward:6.1f} | "
               f"20-ep avg: {recent:6.1f} | eps: {eps:.3f}")
 
-
 # ── Plot ──────────────────────────────────────────────────────────────────────
 plt.figure(figsize=(9, 4))
 plt.plot(episode_rewards, alpha=0.35, color="steelblue", label="per-episode")
-w = 20
+w      = 20
 smooth = np.convolve(episode_rewards, np.ones(w) / w, mode="valid")
 plt.plot(range(w - 1, len(episode_rewards)), smooth,
          color="steelblue", linewidth=2, label=f"{w}-ep moving avg")
 plt.xlabel("Episode"); plt.ylabel("Reward")
 plt.title("DPRL (QVPO + Diffusion Policy) on CartPole")
-plt.legend(); plt.grid(alpha=0.3)
-plt.tight_layout()
+plt.legend(); plt.grid(alpha=0.3); plt.tight_layout()
 plt.savefig("reward_curve.png"); plt.close()
 print("Saved plot to reward_curve.png")
