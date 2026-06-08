@@ -74,7 +74,8 @@ def train_policy(batch_size=256):
     # Advantage = MC return - mean MC return over batch (simple baseline)
     baseline = mc_ret.mean()
     A        = mc_ret - baseline
-    weights  = torch.clamp(A, min=0.0).detach()
+    # weights  = torch.clamp(A, min=0.0).detach()
+    weights  = A.detach()
 
     # Rescale so non-zero weights have unit mean
     nz = weights[weights > 0]
