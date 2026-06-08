@@ -14,7 +14,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
 
 # =======================
-# ✅ Env
+# ✅ Environment
 # =======================
 env = gym.make("CartPole-v1")
 state_dim = 4
@@ -22,7 +22,7 @@ state_dim = 4
 buffer = ReplayBuffer()
 
 # =======================
-# ✅ Load offline data
+# ✅ Load offline dataset
 # =======================
 def load_offline_data(buffer, filename):
     data = np.load(filename)
@@ -64,11 +64,10 @@ alpha_bar = torch.cumprod(alphas, dim=0)
 
 
 # =======================
-# ✅ Sample action
+# ✅ Sample action (SAFE)
 # =======================
 def sample_action(state):
     s = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)
-
     a = torch.randn((1, 1)).to(device)
 
     for t in reversed(range(T)):
@@ -78,21 +77,21 @@ def sample_action(state):
 
         alpha_t = alphas[t]
         alpha_bar_t = alpha_bar[t]
-
         noise = torch.randn_like(a) if t > 0 else 0
 
         a = (1 / torch.sqrt(alpha_t)) * (
             a - ((1 - alpha_t) / torch.sqrt(1 - alpha_bar_t)) * eps_pred
         ) + torch.sqrt(betas[t]) * noise
 
-    # ✅ probabilistic discrete mapping
     a_val = torch.tanh(a).item()
+
+    # ✅ probabilistic mapping (prevents collapse)
     prob = (a_val + 1) / 2
     return np.random.choice([0, 1], p=[1 - prob, prob])
 
 
 # =======================
-# ✅ Q training
+# ✅ Q-learning (stable)
 # =======================
 def train_q(batch_size=64):
     if len(buffer) < batch_size:
@@ -100,10 +99,10 @@ def train_q(batch_size=64):
 
     s, a, r, s_next = buffer.sample(batch_size)
 
-    s = torch.tensor(s, dtype=torch.float32).to(device)
-    a = torch.tensor(a, dtype=torch.float32).unsqueeze(1).to(device)
-    r = torch.tensor(r, dtype=torch.float32).unsqueeze(1).to(device)
-    s_next = torch.tensor(s_next, dtype=torch.float32).to(device)
+    s = torch.tensor(np.array(s), dtype=torch.float32).to(device)
+    a = torch.tensor(np.array(a), dtype=torch.float32).unsqueeze(1).to(device)
+    r = torch.tensor(np.array(r), dtype=torch.float32).unsqueeze(1).to(device)
+    s_next = torch.tensor(np.array(s_next), dtype=torch.float32).to(device)
 
     n_samples = 10
 
@@ -129,9 +128,12 @@ def train_q(batch_size=64):
 
     q_vals = target_q(s_next_flat, a_gen)
     q_vals = q_vals.view(n_samples, batch_size, 1)
+
     max_q = q_vals.max(dim=0)[0]
 
-    target = r + gamma * max_q
+    # ✅ normalized reward (stability)
+    target = (r / 200.0) + gamma * max_q
+
     q = q_net(s, a)
 
     loss = ((q - target) ** 2).mean()
@@ -142,7 +144,7 @@ def train_q(batch_size=64):
 
 
 # =======================
-# ✅ Policy training
+# ✅ Policy training (FIXED)
 # =======================
 def train_policy(batch_size=64, bc_only=False):
     if len(buffer) < batch_size:
@@ -150,8 +152,8 @@ def train_policy(batch_size=64, bc_only=False):
 
     s, a, _, _ = buffer.sample(batch_size)
 
-    s = torch.tensor(s, dtype=torch.float32).to(device)
-    a = torch.tensor(a, dtype=torch.float32).unsqueeze(1).to(device)
+    s = torch.tensor(np.array(s), dtype=torch.float32).to(device)
+    a = torch.tensor(np.array(a), dtype=torch.float32).unsqueeze(1).to(device)
 
     t = torch.randint(0, T, (batch_size,), device=device)
     t_norm = t.float().unsqueeze(1) / T
@@ -163,7 +165,7 @@ def train_policy(batch_size=64, bc_only=False):
 
     eps_pred = policy(s, noisy_a, t_norm)
 
-    # ✅ Behavior cloning loss
+    # ✅ STRONG behavior cloning
     bc_loss = ((eps - eps_pred) ** 2).mean()
 
     if bc_only:
@@ -171,11 +173,12 @@ def train_policy(batch_size=64, bc_only=False):
     else:
         q_val = q_net(s, a)
         baseline = q_val.mean().detach()
-        weights = torch.clamp(q_val - baseline, min=0)
 
+        weights = torch.clamp(q_val - baseline, min=0)
         adv_loss = (weights * (eps - eps_pred) ** 2).mean()
 
-        loss = bc_loss + 0.1 * adv_loss
+        # ✅ BC DOMINATES
+        loss = bc_loss + 0.01 * adv_loss
 
     policy_optimizer.zero_grad()
     loss.backward()
@@ -183,13 +186,13 @@ def train_policy(batch_size=64, bc_only=False):
 
 
 # =======================
-# ✅ PRETRAINING PHASE
+# ✅ PRETRAINING
 # =======================
 print("Pretraining Q...")
 for _ in range(2000):
     train_q()
 
-print("Pretraining policy (BC only)...")
+print("Pretraining policy (BC)...")
 for _ in range(2000):
     train_policy(bc_only=True)
 
@@ -205,22 +208,30 @@ for ep in range(500):
 
     for _ in range(200):
 
-        candidates = [sample_action(s) for _ in range(20)]
+        # ✅ early phase uses safe exploration
+        if ep < 100:
+            a = np.random.choice([0, 1])
+        else:
+            candidates = [sample_action(s) for _ in range(20)]
 
-        s_tensor = torch.tensor(s, dtype=torch.float32).unsqueeze(0).to(device)
+            s_tensor = torch.tensor(s, dtype=torch.float32).unsqueeze(0).to(device)
 
-        q_vals = []
-        for a in candidates:
-            a_tensor = torch.tensor([[a]], dtype=torch.float32).to(device)
-            q_vals.append(q_net(s_tensor, a_tensor).item())
+            q_vals = []
+            for a_cand in candidates:
+                a_tensor = torch.tensor([[a_cand]], dtype=torch.float32).to(device)
+                q_vals.append(q_net(s_tensor, a_tensor).item())
 
-        a = candidates[np.argmax(q_vals)]
+            # ✅ epsilon-greedy on top
+            if np.random.rand() < 0.2:
+                a = np.random.choice([0, 1])
+            else:
+                a = candidates[np.argmax(q_vals)]
 
-        s_next, r, terminated, truncated, _ = env.step(a)
-        done = terminated or truncated
+        s_next, r, term, trunc, _ = env.step(a)
+        done = term or trunc
 
-        # ✅ add slowly (avoid corruption)
-        if ep > 50:
+        # ✅ DELAY online data (CRITICAL)
+        if ep > 200:
             buffer.add(s, a, r, s_next)
 
         train_q()
@@ -232,7 +243,7 @@ for ep in range(500):
         if done:
             break
 
-    # target update
+    # ✅ soft update
     for p, tp in zip(q_net.parameters(), target_q.parameters()):
         tp.data.copy_(0.995 * tp.data + 0.005 * p.data)
 
@@ -243,7 +254,7 @@ for ep in range(500):
 
 
 # =======================
-# ✅ Plot
+# ✅ Plot results
 # =======================
 plt.figure()
 plt.plot(reward_history)
@@ -252,4 +263,4 @@ plt.ylabel("Reward")
 plt.title("CartPole Diffusion + Q-learning")
 plt.savefig("cartpole_training.png")
 
-print("✅ Done. Plot saved.")
+print("✅ Done. Plot saved as cartpole_training.png")
