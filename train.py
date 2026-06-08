@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
 
 from env import ContinuousCartPole
 from buffer import ReplayBuffer
@@ -120,12 +121,14 @@ def select_action(state):
     return samples[best].item()
 
 # Main Training Loop
+episode_rewards = []
 
 episodes = 1000
 
 for ep in range(episodes):
 
     s = env.reset()
+    total_reward = 0
 
     for step in range(200):
 
@@ -135,6 +138,7 @@ for ep in range(episodes):
         buffer.add(s, a, r, s2)
 
         s = s2
+        total_reward += r
 
         train_q()
         train_policy()
@@ -142,4 +146,18 @@ for ep in range(episodes):
         if done:
             break
 
-    print(f"Episode {ep} done")
+    episode_rewards.append(total_reward)
+    print(f"Episode {ep%100} | Reward: {total_reward}")
+
+
+plt.figure()
+plt.plot(episode_rewards)
+plt.xlabel("Episode")
+plt.ylabel("Reward")
+plt.title("DP + Q-Learning Training Curve")
+plt.grid()
+
+plt.savefig("reward_curve.png")
+plt.close()
+
+print("Saved plot to reward_curve.png")
