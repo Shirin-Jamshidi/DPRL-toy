@@ -36,7 +36,7 @@ def train_q(batch_size=256):
     s2 = torch.tensor(s2, dtype=torch.float32).to(device)
 
     # max over next action
-    a_candidates = torch.linspace(-1,1,21).view(21,1).to(device)
+    a_candidates = torch.linspace(-1,1,101).view(101,1).to(device)
 
     s2_expand = s2.unsqueeze(1).repeat(1,21,1)
     a_expand = a_candidates.unsqueeze(0).repeat(len(s2),1,1)
@@ -58,7 +58,9 @@ def train_q(batch_size=256):
     q_opt.step()
 
     # update target
-    target_q.load_state_dict(q_net.state_dict())
+    tau = 0.005
+    for param, target_param in zip(q_net.parameters(), target_q.parameters()):
+        target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
 # QVPO Advantage
 def compute_weights(s, a):
@@ -79,7 +81,11 @@ def compute_weights(s, a):
     v, _ = q_all.max(dim=1)
 
     A = q - v
-    return torch.clamp(A, min=0.0)
+    # normalize
+    A = (A - A.mean()) / (A.std() + 1e-6)
+    # keep positive part
+    weights = torch.clamp(A, min=0.0)
+    return weights
 
 # Diffusion Update
 def train_policy(batch_size=256):
@@ -95,8 +101,9 @@ def train_policy(batch_size=256):
 
     noise = torch.randn_like(a)
 
-    alpha = 0.9
-    a_noisy = (alpha**0.5)*a + ((1-alpha)**0.5)*noise
+    beta = 0.02
+    alpha = 1 - beta
+    a_noisy = torch.sqrt(alpha)*a + torch.sqrt(1-alpha)*noise
 
     pred = policy(s, a_noisy, t)
 
@@ -132,7 +139,10 @@ for ep in range(episodes):
 
     for step in range(200):
 
-        a = select_action(s)
+        if np.random.rand() < 0.1:
+            a = np.random.uniform(-1,1)
+        else:
+            a = select_action(s)
         s2, r, done = env.step(a)
 
         buffer.add(s, a, r, s2)
@@ -141,13 +151,15 @@ for ep in range(episodes):
         total_reward += r
 
         train_q()
-        train_policy()
+        if step % 2 == 0:
+            train_policy()
 
         if done:
             break
 
     episode_rewards.append(total_reward)
-    print(f"Episode {ep%100} | Reward: {total_reward}")
+    if ep % 50 == 0:
+        print(f"Episode {ep}, Reward: {total_reward:.2f}")
 
 
 plt.figure()
