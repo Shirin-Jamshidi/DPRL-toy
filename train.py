@@ -443,7 +443,7 @@ class ScoreNetwork(nn.Module):
         self.n_diffusion_steps= n_diffusion_steps
         action_emb_dim        = 32  # learned embedding per discrete action
 
-        self.action_emb = nn.Embedding(n_actions, action_emb_dim)
+        self.action_emb = nn.Embedding(n_actions + 1, action_emb_dim)
         self.time_emb   = SinusoidalTimeEmbedding(time_emb_dim)
 
         in_dim = action_emb_dim + time_emb_dim + state_dim
@@ -854,7 +854,7 @@ class DiffusionQLTrainer:
     def evaluate(self, env, n_episodes: int = 10) -> float:
         """Greedy evaluation of current diffusion policy."""
         returns = []
-        for _ in range(n_episodes):
+        for ep in range(n_episodes):
             state, _ = env.reset()
             ep_ret   = 0.0
             done     = False
@@ -864,6 +864,7 @@ class DiffusionQLTrainer:
                 ep_ret += reward
                 done    = term or trunc
             returns.append(ep_ret)
+            print(f"    Episode {ep+1}: return = {ep_ret}")
         mean_ret = float(np.mean(returns))
         print(f"  Evaluation over {n_episodes} episodes: "
               f"mean={mean_ret:.1f}  std={np.std(returns):.1f}")
