@@ -22,7 +22,7 @@ def build_config() -> argparse.Namespace:
 	p.add_argument("--seed",         type=int,   default=42)
 
 	# Demo data
-	p.add_argument("--demo_path",    default="cartpole_demo_data.npz")
+	p.add_argument("--demo_path",    default="draft_cartpole_demo_data.npz")
 
 	# Network architecture
 	p.add_argument("--hidden_dim",   type=int,   default=256)
