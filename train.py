@@ -458,6 +458,7 @@ def critic_loss(
         q2_next = q2_target(s_next)
         q_next  = torch.min(q1_next, q2_next).max(dim=1).values   # (B,)
         target  = r + gamma * (1.0 - d) * q_next                  # (B,)
+        target = target.clamp(-100, 100)
 
     q1_pred = q1(s).gather(1, a.unsqueeze(1)).squeeze(1)   # (B,)
     q2_pred = q2(s).gather(1, a.unsqueeze(1)).squeeze(1)
