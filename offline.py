@@ -1,5 +1,3 @@
-from turtle import done
-
 import gymnasium as gym
 import numpy as np
 import math
@@ -7,10 +5,10 @@ import random
 import matplotlib.pyplot as plt
 
 # --- Hyperparameters ---
-NUM_BUCKETS = (10, 10, 20)
+NUM_BUCKETS = (10, 10, 20, 20)
 NUM_ACTIONS = 31
 NUM_EPISODES = 3000
-MAX_STEPS = 200
+MAX_STEPS = 500
 
 MIN_EXPLORE_RATE = 0.01
 MIN_LEARNING_RATE = 0.1
@@ -21,10 +19,15 @@ DECAY_FACTOR = 25
 env = gym.make("CartPole-v1")
 
 # State bounds
-state_bounds = list(zip(env.observation_space.low, env.observation_space.high))
-state_bounds[1] = (-0.5, 0.5)
-state_bounds[2] = (-8, 8)
-state_bounds[3] = (-math.radians(50), math.radians(50))
+state_bounds = [
+    (-2.4, 2.4),          # cart position
+    (-3.0, 3.0),          # cart velocity (clip)
+    (-0.2095, 0.2095),    # pole angle (~12 degrees)
+    (-3.5, 3.5)           # pole angular velocity (clip)
+]
+# state_bounds[1] = (-0.5, 0.5)
+# state_bounds[2] = (-8, 8)
+# state_bounds[3] = (-math.radians(50), math.radians(50))
 
 # Q-table
 q_table = np.zeros(NUM_BUCKETS + (env.action_space.n,))
