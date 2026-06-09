@@ -5,7 +5,7 @@ import random
 import matplotlib.pyplot as plt
 
 # --- Hyperparameters ---
-NUM_BUCKETS = (6, 6, 12, 12)
+NUM_BUCKETS = (10, 10, 20, 20)
 NUM_ACTIONS = 31
 NUM_EPISODES = 30000
 MAX_STEPS = 500
