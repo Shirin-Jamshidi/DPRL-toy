@@ -148,7 +148,7 @@ np.savez("cartpole_demo_data.npz",
          states=states,
          actions=actions,
          rewards=rewards_demo,
-         next_states=next_states
+         next_states=next_states,
          dones=dones
          )
 
