@@ -5,7 +5,7 @@ import random
 import matplotlib.pyplot as plt
 
 # --- Hyperparameters ---
-NUM_BUCKETS = (10, 10, 20, 20)
+NUM_BUCKETS = (6, 6, 12, 12)
 NUM_ACTIONS = 31
 NUM_EPISODES = 30000
 MAX_STEPS = 500
@@ -25,10 +25,6 @@ state_bounds = [
     (-0.2095, 0.2095),    # pole angle (~12 degrees)
     (-3.5, 3.5)           # pole angular velocity (clip)
 ]
-state_bounds[1] = (-0.5, 0.5)
-state_bounds[2] = (-8, 8)
-state_bounds[3] = (-math.radians(50), math.radians(50))
-
 # Q-table
 q_table = np.zeros(NUM_BUCKETS + (env.action_space.n,))
 
