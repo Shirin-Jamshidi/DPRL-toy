@@ -208,7 +208,7 @@ def build_config():
 
     p.add_argument("--hidden_dim", type=int, default=256)
     p.add_argument("--time_emb_dim", type=int, default=64)
-    p.add_argument("--n_diffusion_steps", type=int, default=20)
+    p.add_argument("--n_diffusion_steps", type=int, default=200)
 
     p.add_argument("--batch_size", type=int, default=256)
     p.add_argument("--train_steps", type=int, default=20000)
@@ -238,7 +238,6 @@ def main():
 
     print("\n=== Evaluation ===")
     trainer.evaluate(env, 20)
-    print(env.spec.max_episode_steps)
     env.close()
 
 
