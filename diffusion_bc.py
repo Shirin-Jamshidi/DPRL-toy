@@ -238,7 +238,7 @@ def main():
 
     print("\n=== Evaluation ===")
     trainer.evaluate(env, 20)
-
+    print(env.spec.max_episode_steps)
     env.close()
 
 
