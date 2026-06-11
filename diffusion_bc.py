@@ -131,7 +131,7 @@ class DiscreteDiffusion:
             t = torch.full((B,), t_val, dtype=torch.long, device=device)
             logits = model(x_t, t, state)
             probs = F.softmax(logits, dim=-1)
-            x_t = torch.multinomial(probs, 1).squeeze()
+            x_t = torch.multinomial(probs, 1).squeeze(1)
 
         return x_t
 
