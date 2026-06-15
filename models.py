@@ -211,7 +211,7 @@ class QNetwork(nn.Module):
 # ✅ CONTINUOUS Gaussian Diffusion (DDPM)
 # --------------------------------------------------
 
-class DiscreteGaussianDiffusion(nn.Module):
+class GaussianDiffusion(nn.Module):
     def __init__(self, n_steps: int = 20):
         super().__init__()
         self.T = n_steps
