@@ -464,6 +464,22 @@ class DiffusionTrainer:
 
         # Convert continuous → discrete
         return int((a.item() > 0))
+    
+    def evaluate(self, env, episodes=10):
+        returns = []
+        for ep in range(episodes):
+            state, _ = env.reset()
+            total = 0
+            done = False
+            while not done:
+                action = self.select_action(state)
+                state, r, term, trunc, _ = env.step(action)
+                total += r
+                done = term or trunc
+            returns.append(total)
+            print(f"Episode {ep+1}: {total}")
+
+        print(f"Mean={np.mean(returns):.1f} | Std={np.std(returns):.1f}")
 
                 
 
