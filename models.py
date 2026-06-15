@@ -66,7 +66,12 @@ class ScoreNetwork(nn.Module):
 	# 	return self.net(x)
 
 	def forward(self, x_t, t, state):
-		# x_t is now continuous (B,1)
+		# ✅ FIX: force x_t to be (B,1)
+		if x_t.dim() == 1:
+			x_t = x_t.unsqueeze(1)
+		elif x_t.dim() > 2:
+			x_t = x_t.view(x_t.size(0), -1)
+
 		t_emb = self.time_emb(t)
 		x = torch.cat([x_t, t_emb, state], dim=-1)
 		return self.net(x)
@@ -292,9 +297,13 @@ class GaussianDiffusion(nn.Module):
 
             pred_noise = score_net(x_t, t, state)
 
-            alpha_t = self.alphas[t].unsqueeze(1)
-            alpha_bar_t = self.alpha_bar[t].unsqueeze(1)
-            beta_t = self.betas[t].unsqueeze(1)
+            # alpha_t = self.alphas[t].unsqueeze(1)
+            # alpha_bar_t = self.alpha_bar[t].unsqueeze(1)
+            # beta_t = self.betas[t].unsqueeze(1)
+			alpha_t = self.alphas[t].unsqueeze(1)
+			alpha_bar_t = self.alpha_bar[t].unsqueeze(1)
+			beta_t = self.betas[t].unsqueeze(1)
+
 
             # basic DDPM update
             x0_pred = (x_t - torch.sqrt(1 - alpha_bar_t) * pred_noise) \
@@ -309,11 +318,17 @@ class GaussianDiffusion(nn.Module):
                 grad = torch.gather(q_adv, 1, actions_disc.unsqueeze(1)).float()
                 x0_pred = x0_pred + guidance_scale * grad.unsqueeze(1)
 
-            noise = torch.randn_like(x_t) if t_val > 0 else 0.0
+            # noise = torch.randn_like(x_t) if t_val > 0 else 0.0
 
-            x_t = (
-                torch.sqrt(alpha_t) * x0_pred +
-                torch.sqrt(1 - alpha_t) * noise
-            )
+            # x_t = (
+            #     torch.sqrt(alpha_t) * x0_pred +
+            #     torch.sqrt(1 - alpha_t) * noise
+            # )
 
+			noise = torch.randn_like(x_t) if t_val > 0 else 0.0
+			x_t = (
+				1 / torch.sqrt(alpha_t)
+				* (x_t - ((1 - alpha_t) / torch.sqrt(1 - alpha_bar_t)) * pred_noise)
+				+ torch.sqrt(beta_t) * noise
+			)
         return self.to_discrete(x_t.squeeze(1))

@@ -470,13 +470,13 @@ from models import ScoreNetwork, QNetwork, GaussianDiffusion
 
 # Replay buffers and model classes were moved to `buffer.py` and `models.py`.
 def qvpo_policy_loss(
-    score_net:  ScoreNetwork,
-    diffusion:  GaussianDiffusion,
-    q1:         QNetwork,
-    q2:         QNetwork,
-    batch:      dict,
-    bc_weight:  float = 0.5,
-) -> torch.Tensor:
+    score_net,
+    diffusion,
+    q1,
+    q2,
+    batch,
+    bc_weight=0.5,
+):
     """
     L_QVPO = L_DSM + λ_BC · L_BC
 
@@ -487,26 +487,39 @@ def qvpo_policy_loss(
     states  = batch["states"]
     actions = batch["actions"]   # (B,) long
 
-    # ── 1. DSM loss ──────────────────────────────────────────────────
+
+    # --------------------------------------------------
+    # 1. DSM loss (diffusion objective)
+    # --------------------------------------------------
     l_dsm = diffusion.p_losses(score_net, actions, states)
 
-    # ── 2. BC loss weighted by Q-advantage (QVPO eq. 5) ─────────────
+    # --------------------------------------------------
+    # 2. Q-weighted BC (QVPO-style)
+    # --------------------------------------------------
     with torch.no_grad():
-        q_vals  = torch.min(q1(states), q2(states))       # (B, n_actions)
-        q_sa    = q_vals.gather(1, actions.unsqueeze(1)).squeeze(1)  # (B,)
-        q_mean  = q_vals.mean(dim=1)                       # (B,)
-        adv     = q_sa - q_mean                            # (B,)
-        weights = torch.exp(adv.clamp(-5, 5))              # soft-max advantage weighting
+        q_vals = torch.min(q1(states), q2(states))  # (B,2)
 
-    # BC: push policy toward demonstrated actions, scaled by advantage
-    B      = states.shape[0]
+        q_sa = q_vals.gather(1, actions.unsqueeze(1)).squeeze(1)   # (B,)
+        q_mean = q_vals.mean(dim=1)                                # (B,)
+        adv = q_sa - q_mean                                        # (B,)
+
+        weights = torch.exp(adv.clamp(-5, 5))                      # (B,)
+
+    # --------------------------------------------------
+    # 3. Continuous BC loss (Gaussian version)
+    # --------------------------------------------------
+    B = actions.shape[0]
     t_bc = torch.zeros(B, dtype=torch.long, device=states.device)
 
-    x0 = diffusion.to_continuous(actions).unsqueeze(1)
-    x0_pred = score_net(x0, t_bc, states)
+    # discrete → continuous
+    x0 = diffusion.to_continuous(actions).unsqueeze(1)   # (B,1)
 
+    # predict clean action (t = 0)
+    x0_pred = score_net(x0, t_bc, states)               # (B,1)
 
-    l_bc = F.mse_loss(x0_pred, x0)
+    # weighted MSE
+    l_bc = (weights.unsqueeze(1) * (x0_pred - x0) ** 2).mean()
+
     return l_dsm + bc_weight * l_bc
 
 
