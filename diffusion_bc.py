@@ -498,10 +498,10 @@ def build_config():
 
     p.add_argument("--hidden_dim", type=int, default=256)
     p.add_argument("--time_emb_dim", type=int, default=64)
-    p.add_argument("--n_diffusion_steps", type=int, default=200)
+    p.add_argument("--n_diffusion_steps", type=int, default=20)
 
     p.add_argument("--batch_size", type=int, default=256)
-    p.add_argument("--train_steps", type=int, default=20000)
+    p.add_argument("--train_steps", type=int, default=200000)
     p.add_argument("--lr", type=float, default=3e-4)
 
     p.add_argument("--log_interval", type=int, default=1000)
