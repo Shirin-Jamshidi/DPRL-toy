@@ -80,7 +80,7 @@ class QNetwork(nn.Module):
 
 
 
-class DiscreteGaussianDiffusion(nn.Module):
+class DiscreteGaussianDiffusion:
 	"""
 	Implements a simple masking / discrete diffusion schedule for action tokens.
 
@@ -93,25 +93,14 @@ class DiscreteGaussianDiffusion(nn.Module):
 
 	MASK_TOKEN = 2  # special token outside {0,1}
 
-	# def __init__(self, n_steps: int = 20):
-	# 	self.T = n_steps
-	# 	# Linear schedule for mask probability
-	# 	betas = torch.linspace(0.01, 0.5, n_steps)
-	# 	# Cumulative product: probability of NOT being masked up to step t
-	# 	alphas = 1.0 - betas
-	# 	self.alpha_bar = torch.cumprod(alphas, dim=0)  # (T,)
-	# 	self.betas     = betas
-
-    def __init__(self, n_steps: int = 20):
-        super().__init__()
-        self.T = n_steps
-
-        betas = torch.linspace(0.01, 0.5, n_steps)
-        alphas = 1 - betas
-        alpha_bar = torch.cumprod(alphas, dim=0)
-
-        # ✅ fix: register buffer
-        self.register_buffer("alpha_bar", alpha_bar)
+	def __init__(self, n_steps: int = 20):
+		self.T = n_steps
+		# Linear schedule for mask probability
+		betas = torch.linspace(0.01, 0.5, n_steps)
+		# Cumulative product: probability of NOT being masked up to step t
+		alphas = 1.0 - betas
+		self.alpha_bar = torch.cumprod(alphas, dim=0)  # (T,)
+		self.betas     = betas
 
 	def q_sample(self, x0: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
 		"""
@@ -120,8 +109,7 @@ class DiscreteGaussianDiffusion(nn.Module):
 		t  : (B,) long ∈ [0, T-1]
 		returns noisy actions (B,) — some entries replaced by MASK_TOKEN
 		"""
-		# alpha_bar_t = self.alpha_bar[t].to(x0.device)      # (B,)
-		alpha_bar_t = self.alpha_bar[t]
+		alpha_bar_t = self.alpha_bar[t].to(x0.device)      # (B,)
 		keep_mask   = torch.bernoulli(alpha_bar_t).bool()   # True → keep original
 		noisy       = torch.where(keep_mask, x0, torch.full_like(x0, self.MASK_TOKEN))
 		return noisy
