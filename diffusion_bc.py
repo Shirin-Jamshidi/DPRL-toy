@@ -99,17 +99,22 @@ class ScoreNetwork(nn.Module):
 # Diffusion Process
 # --------------------------------------------------
 
-class DiscreteDiffusion:
+class DiscreteDiffusion(nn.Module):
     MASK = 2
 
     def __init__(self, n_steps):
+        super().__init__()
         self.T = n_steps
+
         betas = torch.linspace(0.01, 0.5, n_steps)
         alphas = 1 - betas
-        self.alpha_bar = torch.cumprod(alphas, dim=0)
+        alpha_bar = torch.cumprod(alphas, dim=0)
+
+        # ✅ register as buffer so it moves with .to(device)
+        self.register_buffer("alpha_bar", alpha_bar)
 
     def q_sample(self, x0, t):
-        alpha_bar_t = self.alpha_bar[t].to(x0.device)
+        alpha_bar_t = self.alpha_bar[t]  # ✅ now safe
         keep = torch.bernoulli(alpha_bar_t).bool()
         return torch.where(keep, x0, torch.full_like(x0, self.MASK))
 
@@ -150,7 +155,7 @@ class DiffusionTrainer:
             cfg.state_dim, cfg.n_actions, cfg.hidden_dim, cfg.time_emb_dim
         ).to(device)
 
-        self.diffusion = DiscreteDiffusion(cfg.n_diffusion_steps)
+        self.diffusion = DiscreteDiffusion(cfg.n_diffusion_steps).to(device)
 
         self.opt = optim.Adam(self.model.parameters(), lr=cfg.lr)
 
