@@ -37,12 +37,13 @@ class ScoreNetwork(nn.Module):
 		super().__init__()
 		self.n_actions        = n_actions
 		self.n_diffusion_steps= n_diffusion_steps
-		action_emb_dim        = 32  # learned embedding per discrete action
+		# action_emb_dim        = 32  # learned embedding per discrete action
 
-		self.action_emb = nn.Embedding(n_actions + 1, action_emb_dim)
+		# self.action_emb = nn.Embedding(n_actions + 1, action_emb_dim)
 		self.time_emb   = SinusoidalTimeEmbedding(time_emb_dim)
 
-		in_dim = action_emb_dim + time_emb_dim + state_dim
+		# in_dim = action_emb_dim + time_emb_dim + state_dim
+		in_dim = 1 + time_emb_dim + state_dim
 		self.net = nn.Sequential(
 			nn.Linear(in_dim, hidden_dim), nn.Mish(),
 			nn.Linear(hidden_dim, hidden_dim), nn.Mish(),
@@ -50,17 +51,23 @@ class ScoreNetwork(nn.Module):
 			nn.Linear(hidden_dim, n_actions),   # raw logits
 		)
 
-	def forward(self, noisy_action: torch.Tensor, t: torch.Tensor,
-				state: torch.Tensor) -> torch.Tensor:
-		"""
-		noisy_action : (B,)  long — discrete noisy action token
-		t            : (B,)  long — diffusion timestep in [0, T-1]
-		state        : (B, state_dim)
-		returns      : (B, n_actions)  score logits
-		"""
-		a_emb = self.action_emb(noisy_action)     # (B, action_emb_dim)
-		t_emb = self.time_emb(t)                   # (B, time_emb_dim)
-		x     = torch.cat([a_emb, t_emb, state], dim=-1)
+	# def forward(self, noisy_action: torch.Tensor, t: torch.Tensor,
+	# 			state: torch.Tensor) -> torch.Tensor:
+	# 	"""
+	# 	noisy_action : (B,)  long — discrete noisy action token
+	# 	t            : (B,)  long — diffusion timestep in [0, T-1]
+	# 	state        : (B, state_dim)
+	# 	returns      : (B, n_actions)  score logits
+	# 	"""
+	# 	a_emb = self.action_emb(noisy_action)     # (B, action_emb_dim)
+	# 	t_emb = self.time_emb(t)                   # (B, time_emb_dim)
+	# 	x     = torch.cat([a_emb, t_emb, state], dim=-1)
+	# 	return self.net(x)
+
+	def forward(self, x_t, t, state):
+		# x_t is now continuous (B,1)
+		t_emb = self.time_emb(t)
+		x = torch.cat([x_t, t_emb, state], dim=-1)
 		return self.net(x)
 
 
@@ -160,59 +167,152 @@ class QNetwork(nn.Module):
 
 # 		return x_t
 
-class DiscreteGaussianDiffusion(nn.Module):
-    MASK_TOKEN = 2  # special token outside {0,1}
+# class DiscreteGaussianDiffusion(nn.Module):
+#     MASK_TOKEN = 2  # special token outside {0,1}
 
+#     def __init__(self, n_steps: int = 20):
+#         super().__init__()
+#         self.T = n_steps
+
+#         betas = torch.linspace(0.01, 0.5, n_steps)
+#         alphas = 1 - betas
+#         alpha_bar = torch.cumprod(alphas, dim=0)
+
+#         # ✅ buffer → automatically moves with .to(device)
+#         self.register_buffer("alpha_bar", alpha_bar)
+
+#     def q_sample(self, x0: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+#         alpha_bar_t = self.alpha_bar[t]
+#         keep_mask = torch.bernoulli(alpha_bar_t).bool()
+#         return torch.where(
+#             keep_mask,
+#             x0,
+#             torch.full_like(x0, self.MASK_TOKEN)
+#         )
+
+#     def p_losses(self, score_net, x0: torch.Tensor, state: torch.Tensor) -> torch.Tensor:
+#         B = x0.shape[0]
+#         t = torch.randint(0, self.T, (B,), device=x0.device)
+#         noisy = self.q_sample(x0, t)
+#         logits = score_net(noisy, t, state)
+#         return F.cross_entropy(logits[:, :score_net.n_actions], x0)
+
+#     @torch.no_grad()
+#     def p_sample(self, score_net, state: torch.Tensor,
+#                  q1, q2, guidance_scale: float = 1.0) -> torch.Tensor:
+
+#         B = state.shape[0]
+#         device = state.device
+
+#         x_t = torch.full((B,), self.MASK_TOKEN, dtype=torch.long, device=device)
+
+#         for t_val in reversed(range(self.T)):
+#             t = torch.full((B,), t_val, dtype=torch.long, device=device)
+#             logits = score_net(x_t, t, state)
+
+#             if guidance_scale > 0.0:
+#                 q_vals = torch.min(q1(state), q2(state))
+#                 q_adv = q_vals - q_vals.mean(dim=1, keepdim=True)
+#                 logits = logits[:, :2] + guidance_scale * q_adv
+#             else:
+#                 logits = logits[:, :2]
+
+#             probs = F.softmax(logits, dim=-1)
+#             x_t = torch.multinomial(probs, 1).squeeze(1)
+
+#         return x_t
+
+
+class GaussianDiffusion(nn.Module):
     def __init__(self, n_steps: int = 20):
         super().__init__()
         self.T = n_steps
 
-        betas = torch.linspace(0.01, 0.5, n_steps)
-        alphas = 1 - betas
+        betas = torch.linspace(1e-4, 0.02, n_steps)
+        alphas = 1.0 - betas
         alpha_bar = torch.cumprod(alphas, dim=0)
 
-        # ✅ buffer → automatically moves with .to(device)
+        self.register_buffer("betas", betas)
+        self.register_buffer("alphas", alphas)
         self.register_buffer("alpha_bar", alpha_bar)
 
-    def q_sample(self, x0: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        alpha_bar_t = self.alpha_bar[t]
-        keep_mask = torch.bernoulli(alpha_bar_t).bool()
-        return torch.where(
-            keep_mask,
-            x0,
-            torch.full_like(x0, self.MASK_TOKEN)
+    # ------------------------------------------
+    # helper: map discrete → continuous
+    # ------------------------------------------
+    def to_continuous(self, actions):
+        return actions.float() * 2.0 - 1.0   # {0,1} → {-1,+1}
+
+    def to_discrete(self, x):
+        return (x > 0.0).long()
+
+    # ------------------------------------------
+    # forward diffusion q(x_t | x_0)
+    # ------------------------------------------
+    def q_sample(self, x0, t, noise=None):
+        if noise is None:
+            noise = torch.randn_like(x0)
+
+        alpha_bar_t = self.alpha_bar[t].unsqueeze(1)
+
+        return (
+            torch.sqrt(alpha_bar_t) * x0 +
+            torch.sqrt(1 - alpha_bar_t) * noise
         )
 
-    def p_losses(self, score_net, x0: torch.Tensor, state: torch.Tensor) -> torch.Tensor:
-        B = x0.shape[0]
-        t = torch.randint(0, self.T, (B,), device=x0.device)
-        noisy = self.q_sample(x0, t)
-        logits = score_net(noisy, t, state)
-        return F.cross_entropy(logits[:, :score_net.n_actions], x0)
+    # ------------------------------------------
+    # training loss (predict noise)
+    # ------------------------------------------
+    def p_losses(self, score_net, actions, state):
+        B = actions.shape[0]
 
+        x0 = self.to_continuous(actions).unsqueeze(1)  # (B,1)
+
+        t = torch.randint(0, self.T, (B,), device=actions.device)
+
+        noise = torch.randn_like(x0)
+        x_t = self.q_sample(x0, t, noise)
+
+        pred_noise = score_net(x_t, t, state)
+
+        return F.mse_loss(pred_noise, noise)
+
+    # ------------------------------------------
+    # reverse sampling
+    # ------------------------------------------
     @torch.no_grad()
-    def p_sample(self, score_net, state: torch.Tensor,
-                 q1, q2, guidance_scale: float = 1.0) -> torch.Tensor:
-
+    def p_sample(self, score_net, state, q1, q2, guidance_scale=1.0):
         B = state.shape[0]
         device = state.device
 
-        x_t = torch.full((B,), self.MASK_TOKEN, dtype=torch.long, device=device)
+        x_t = torch.randn(B, 1, device=device)
 
         for t_val in reversed(range(self.T)):
-            t = torch.full((B,), t_val, dtype=torch.long, device=device)
-            logits = score_net(x_t, t, state)
+            t = torch.full((B,), t_val, device=device, dtype=torch.long)
 
-            if guidance_scale > 0.0:
+            pred_noise = score_net(x_t, t, state)
+
+            alpha_t = self.alphas[t].unsqueeze(1)
+            alpha_bar_t = self.alpha_bar[t].unsqueeze(1)
+            beta_t = self.betas[t].unsqueeze(1)
+
+            # basic DDPM update
+            x0_pred = (x_t - torch.sqrt(1 - alpha_bar_t) * pred_noise) \
+                      / torch.sqrt(alpha_bar_t)
+
+            # ---- Q-guidance ----
+            if guidance_scale > 0:
+                actions_disc = self.to_discrete(x0_pred.squeeze(1))
                 q_vals = torch.min(q1(state), q2(state))
                 q_adv = q_vals - q_vals.mean(dim=1, keepdim=True)
-                logits = logits[:, :2] + guidance_scale * q_adv
-            else:
-                logits = logits[:, :2]
 
-            probs = F.softmax(logits, dim=-1)
-            x_t = torch.multinomial(probs, 1).squeeze(1)
+                grad = torch.gather(q_adv, 1, actions_disc.unsqueeze(1)).float()
+                x0_pred = x0_pred + guidance_scale * grad.unsqueeze(1)
 
-        return x_t
+            noise = torch.randn_like(x_t) if t_val > 0 else 0.0
 
+            x_t = (
+                torch.sqrt(alpha_t) * x0_pred +
+                torch.sqrt(1 - alpha_t) * noise
+            )
 
+        return self.to_discrete(x_t.squeeze(1))

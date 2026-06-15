@@ -41,7 +41,7 @@ import torch.optim as optim
 
 from env import set_seed, build_config
 from buffer import OfflineBuffer, OnlineBuffer, HyQMixer
-from models import ScoreNetwork, QNetwork, DiscreteGaussianDiffusion
+from models import ScoreNetwork, QNetwork, GaussianDiffusion
 
 # ──────────────────────────────────────────────
 # Reproducibility helpers
@@ -167,7 +167,7 @@ class DiffusionQLTrainer:
         for p in self.q2_target.parameters(): p.requires_grad_(False)
 
         # ── Diffusion schedule ───────────────────────────────────────
-        self.diffusion = DiscreteGaussianDiffusion(cfg.n_diffusion_steps).to(device)
+        self.diffusion = GaussianDiffusion(cfg.n_diffusion_steps).to(device)
 
         # ── Optimisers ───────────────────────────────────────────────
         self.opt_score = optim.Adam(self.score_net.parameters(), lr=cfg.lr_policy)
