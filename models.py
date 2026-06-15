@@ -48,7 +48,8 @@ class ScoreNetwork(nn.Module):
 			nn.Linear(in_dim, hidden_dim), nn.Mish(),
 			nn.Linear(hidden_dim, hidden_dim), nn.Mish(),
 			nn.Linear(hidden_dim, hidden_dim), nn.Mish(),
-			nn.Linear(hidden_dim, n_actions),   # raw logits
+			# nn.Linear(hidden_dim, n_actions),   # raw logits
+            nn.Linear(hidden_dim, 1),
 		)
 
 	# def forward(self, noisy_action: torch.Tensor, t: torch.Tensor,
