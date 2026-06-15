@@ -80,83 +80,139 @@ class QNetwork(nn.Module):
 
 
 
-class DiscreteGaussianDiffusion:
-	"""
-	Implements a simple masking / discrete diffusion schedule for action tokens.
+# class DiscreteGaussianDiffusion:
+# 	"""
+# 	Implements a simple masking / discrete diffusion schedule for action tokens.
 
-	We use the "absorbing state" formulation common for discrete diffusion:
-	  - Forward: at each step, independently mask each position with prob β_t
-	  - Reverse: learn to unmask via the score network
+# 	We use the "absorbing state" formulation common for discrete diffusion:
+# 	  - Forward: at each step, independently mask each position with prob β_t
+# 	  - Reverse: learn to unmask via the score network
 
-	For CartPole's binary action space, the absorbing/mask token is index 2.
-	"""
+# 	For CartPole's binary action space, the absorbing/mask token is index 2.
+# 	"""
 
-	MASK_TOKEN = 2  # special token outside {0,1}
+# 	MASK_TOKEN = 2  # special token outside {0,1}
 
-	def __init__(self, n_steps: int = 20):
-		self.T = n_steps
-		# Linear schedule for mask probability
-		betas = torch.linspace(0.01, 0.5, n_steps)
-		# Cumulative product: probability of NOT being masked up to step t
-		alphas = 1.0 - betas
-		self.alpha_bar = torch.cumprod(alphas, dim=0)  # (T,)
-		self.betas     = betas
+# 	def __init__(self, n_steps: int = 20):
+# 		self.T = n_steps
+# 		# Linear schedule for mask probability
+# 		betas = torch.linspace(0.01, 0.5, n_steps)
+# 		# Cumulative product: probability of NOT being masked up to step t
+# 		alphas = 1.0 - betas
+# 		self.alpha_bar = torch.cumprod(alphas, dim=0)  # (T,)
+# 		self.betas     = betas
 
-	def q_sample(self, x0: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-		"""
-		Forward process: corrupt x0 at timestep t.
-		x0 : (B,) long ∈ {0,1}
-		t  : (B,) long ∈ [0, T-1]
-		returns noisy actions (B,) — some entries replaced by MASK_TOKEN
-		"""
-		alpha_bar_t = self.alpha_bar[t].to(x0.device)      # (B,)
-		keep_mask   = torch.bernoulli(alpha_bar_t).bool()   # True → keep original
-		noisy       = torch.where(keep_mask, x0, torch.full_like(x0, self.MASK_TOKEN))
-		return noisy
+# 	def q_sample(self, x0: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+# 		"""
+# 		Forward process: corrupt x0 at timestep t.
+# 		x0 : (B,) long ∈ {0,1}
+# 		t  : (B,) long ∈ [0, T-1]
+# 		returns noisy actions (B,) — some entries replaced by MASK_TOKEN
+# 		"""
+# 		alpha_bar_t = self.alpha_bar[t].to(x0.device)      # (B,)
+# 		keep_mask   = torch.bernoulli(alpha_bar_t).bool()   # True → keep original
+# 		noisy       = torch.where(keep_mask, x0, torch.full_like(x0, self.MASK_TOKEN))
+# 		return noisy
 
-	def p_losses(self, score_net: ScoreNetwork, x0: torch.Tensor,
-				 state: torch.Tensor) -> torch.Tensor:
-		"""
-		Denoising score matching loss (cross-entropy on clean action prediction).
-		"""
-		B      = x0.shape[0]
-		t      = torch.randint(0, self.T, (B,), device=x0.device)
-		noisy  = self.q_sample(x0, t)
-		logits = score_net(noisy, t, state)          # (B, n_actions)
-		# Predict clean action class — standard DDPM "x0 parameterisation"
-		return F.cross_entropy(logits[:, :score_net.n_actions], x0)
+# 	def p_losses(self, score_net: ScoreNetwork, x0: torch.Tensor,
+# 				 state: torch.Tensor) -> torch.Tensor:
+# 		"""
+# 		Denoising score matching loss (cross-entropy on clean action prediction).
+# 		"""
+# 		B      = x0.shape[0]
+# 		t      = torch.randint(0, self.T, (B,), device=x0.device)
+# 		noisy  = self.q_sample(x0, t)
+# 		logits = score_net(noisy, t, state)          # (B, n_actions)
+# 		# Predict clean action class — standard DDPM "x0 parameterisation"
+# 		return F.cross_entropy(logits[:, :score_net.n_actions], x0)
 
-	@torch.no_grad()
-	def p_sample(self, score_net: ScoreNetwork, state: torch.Tensor,
-				 q1: QNetwork, q2: QNetwork,
-				 guidance_scale: float = 1.0) -> torch.Tensor:
-		"""
-		Reverse diffusion sampling with Q-guidance (QVPO Algorithm 1).
-		Starts from fully masked and iteratively denoises.
+# 	@torch.no_grad()
+# 	def p_sample(self, score_net: ScoreNetwork, state: torch.Tensor,
+# 				 q1: QNetwork, q2: QNetwork,
+# 				 guidance_scale: float = 1.0) -> torch.Tensor:
+# 		"""
+# 		Reverse diffusion sampling with Q-guidance (QVPO Algorithm 1).
+# 		Starts from fully masked and iteratively denoises.
 
-		Returns: (B,) long — sampled discrete actions
-		"""
-		B      = state.shape[0]
-		device = state.device
-		# Start from fully masked
-		x_t = torch.full((B,), self.MASK_TOKEN, dtype=torch.long, device=device)
+# 		Returns: (B,) long — sampled discrete actions
+# 		"""
+# 		B      = state.shape[0]
+# 		device = state.device
+# 		# Start from fully masked
+# 		x_t = torch.full((B,), self.MASK_TOKEN, dtype=torch.long, device=device)
 
-		for t_val in reversed(range(self.T)):
-			t = torch.full((B,), t_val, dtype=torch.long, device=device)
-			logits = score_net(x_t, t, state)        # (B, n_actions)
+# 		for t_val in reversed(range(self.T)):
+# 			t = torch.full((B,), t_val, dtype=torch.long, device=device)
+# 			logits = score_net(x_t, t, state)        # (B, n_actions)
 
-			# ── Q-guidance  (QVPO §3.2) ──────────────────────────────
-			# Q-values for valid actions; add scaled Q-advantage to logits
-			if guidance_scale > 0.0:
-				q_vals  = torch.min(q1(state), q2(state))   # (B, n_actions)
-				q_adv   = q_vals - q_vals.mean(dim=1, keepdim=True)
-				logits  = logits[:, :2] + guidance_scale * q_adv
-			else:
-				logits  = logits[:, :2]
+# 			# ── Q-guidance  (QVPO §3.2) ──────────────────────────────
+# 			# Q-values for valid actions; add scaled Q-advantage to logits
+# 			if guidance_scale > 0.0:
+# 				q_vals  = torch.min(q1(state), q2(state))   # (B, n_actions)
+# 				q_adv   = q_vals - q_vals.mean(dim=1, keepdim=True)
+# 				logits  = logits[:, :2] + guidance_scale * q_adv
+# 			else:
+# 				logits  = logits[:, :2]
 
-			# Gumbel-softmax → hard sample
-			probs = F.softmax(logits, dim=-1)
-			x_t   = torch.multinomial(probs, 1).squeeze(1)  # (B,)
+# 			# Gumbel-softmax → hard sample
+# 			probs = F.softmax(logits, dim=-1)
+# 			x_t   = torch.multinomial(probs, 1).squeeze(1)  # (B,)
 
-		return x_t
+# 		return x_t
+
+class DiscreteGaussianDiffusion(nn.Module):
+    MASK_TOKEN = 2  # special token outside {0,1}
+
+    def __init__(self, n_steps: int = 20):
+        super().__init__()
+        self.T = n_steps
+
+        betas = torch.linspace(0.01, 0.5, n_steps)
+        alphas = 1 - betas
+        alpha_bar = torch.cumprod(alphas, dim=0)
+
+        # ✅ buffer → automatically moves with .to(device)
+        self.register_buffer("alpha_bar", alpha_bar)
+
+    def q_sample(self, x0: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        alpha_bar_t = self.alpha_bar[t]
+        keep_mask = torch.bernoulli(alpha_bar_t).bool()
+        return torch.where(
+            keep_mask,
+            x0,
+            torch.full_like(x0, self.MASK_TOKEN)
+        )
+
+    def p_losses(self, score_net, x0: torch.Tensor, state: torch.Tensor) -> torch.Tensor:
+        B = x0.shape[0]
+        t = torch.randint(0, self.T, (B,), device=x0.device)
+        noisy = self.q_sample(x0, t)
+        logits = score_net(noisy, t, state)
+        return F.cross_entropy(logits[:, :score_net.n_actions], x0)
+
+    @torch.no_grad()
+    def p_sample(self, score_net, state: torch.Tensor,
+                 q1, q2, guidance_scale: float = 1.0) -> torch.Tensor:
+
+        B = state.shape[0]
+        device = state.device
+
+        x_t = torch.full((B,), self.MASK_TOKEN, dtype=torch.long, device=device)
+
+        for t_val in reversed(range(self.T)):
+            t = torch.full((B,), t_val, dtype=torch.long, device=device)
+            logits = score_net(x_t, t, state)
+
+            if guidance_scale > 0.0:
+                q_vals = torch.min(q1(state), q2(state))
+                q_adv = q_vals - q_vals.mean(dim=1, keepdim=True)
+                logits = logits[:, :2] + guidance_scale * q_adv
+            else:
+                logits = logits[:, :2]
+
+            probs = F.softmax(logits, dim=-1)
+            x_t = torch.multinomial(probs, 1).squeeze(1)
+
+        return x_t
+
 
