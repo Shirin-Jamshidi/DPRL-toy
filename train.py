@@ -167,7 +167,7 @@ class DiffusionQLTrainer:
         for p in self.q2_target.parameters(): p.requires_grad_(False)
 
         # ── Diffusion schedule ───────────────────────────────────────
-        self.diffusion = DiscreteGaussianDiffusion(cfg.n_diffusion_steps)
+        self.diffusion = DiscreteGaussianDiffusion(cfg.n_diffusion_steps).to(device)
 
         # ── Optimisers ───────────────────────────────────────────────
         self.opt_score = optim.Adam(self.score_net.parameters(), lr=cfg.lr_policy)
