@@ -498,8 +498,8 @@ def build_config():
     p.add_argument("--env", default="CartPole-v1")
     p.add_argument("--demo_path", default="cartpole_demo_data.npz")
 
-    p.add_argument("--state_dim", type=int, default=6)
-    p.add_argument("--n_actions", type=int, default=6)
+    p.add_argument("--state_dim", type=int, default=4)
+    p.add_argument("--n_actions", type=int, default=2)
 
     p.add_argument("--hidden_dim", type=int, default=256)
     p.add_argument("--time_emb_dim", type=int, default=64)
