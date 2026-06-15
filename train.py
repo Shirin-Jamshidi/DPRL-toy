@@ -53,7 +53,7 @@ from models import ScoreNetwork, QNetwork, GaussianDiffusion
 # Replay buffers and model classes were moved to `buffer.py` and `models.py`.
 def qvpo_policy_loss(
     score_net:  ScoreNetwork,
-    diffusion:  DiscreteGaussianDiffusion,
+    diffusion:  GaussianDiffusion,
     q1:         QNetwork,
     q2:         QNetwork,
     batch:      dict,
